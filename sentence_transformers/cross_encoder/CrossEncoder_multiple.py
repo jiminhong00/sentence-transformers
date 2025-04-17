@@ -170,7 +170,6 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
         if "model_max_length" not in tokenizer_kwargs and max_length is not None:
             tokenizer_kwargs["model_max_length"] = max_length
             
-        print("Start of custom tokenizer") #custom code
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name_or_path,
             cache_dir=cache_folder,
@@ -180,10 +179,6 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
             token=token,
             **tokenizer_kwargs,
         )
-        #adding special tokens for parsing multiple sequences
-        extra_special_tokens={"additional_special_tokens": ["<prompt1>", "<prompt2>", "<prompt3>"]}
-        self.tokenizer.add_special_tokens(extra_special_tokens)
-        self.model.resize_token_embeddings(len(self.tokenizer))
         
         if "model_max_length" not in tokenizer_kwargs and hasattr(self.config, "max_position_embeddings"):
             self.tokenizer.model_max_length = min(self.tokenizer.model_max_length, self.config.max_position_embeddings)
