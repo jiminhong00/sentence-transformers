@@ -119,6 +119,7 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
         tokenizer_kwargs: dict = None,
         config_kwargs: dict = None,
         model_card_data: CrossEncoderModelCardData | None = None,
+        debug: bool=False
     ) -> None:
         super().__init__()
         if tokenizer_kwargs is None:
@@ -130,6 +131,7 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
         self.model_card_data = model_card_data or CrossEncoderModelCardData()
         self.trust_remote_code = trust_remote_code
         self._model_card_text = None
+        self.debug = debug 
 
         config: PretrainedConfig = AutoConfig.from_pretrained(
             model_name_or_path,
@@ -170,19 +172,10 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
             **model_kwargs,
         )
         
-        #adding special tokens for parsing multiple sequences
-        extra_special_tokens={"additional_special_tokens": ["<p1>", "<p2>", "<p3>"]}
-        self.tokenizer.add_special_tokens(extra_special_tokens)
-        self.model.resize_token_embeddings(len(self.tokenizer))
-        # print(self.tokenizer.special_tokens_map) # custom code
-
-        self.base_model = self.model.longformer
-        self.cls_head = self.model.classifier
-
+        
         if "model_max_length" not in tokenizer_kwargs and max_length is not None:
             tokenizer_kwargs["model_max_length"] = max_length
             
-        # print("Start of custom tokenizer") #custom code
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name_or_path,
             cache_dir=cache_folder,
@@ -192,6 +185,16 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
             token=token,
             **tokenizer_kwargs,
         )
+
+        #adding special tokens for parsing multiple sequences
+        extra_special_tokens={"additional_special_tokens": ["<p1>", "<p2>", "<p3>"]}
+        self.tokenizer.add_special_tokens(extra_special_tokens)
+        self.model.resize_token_embeddings(len(self.tokenizer))
+        # if(self.debug): print(self.tokenizer.special_tokens_map) # custom code
+
+        self.base_model = self.model.longformer
+        self.cls_head = self.model.classifier
+
         
         if "model_max_length" not in tokenizer_kwargs and hasattr(self.config, "max_position_embeddings"):
             self.tokenizer.model_max_length = min(self.tokenizer.model_max_length, self.config.max_position_embeddings)
@@ -408,10 +411,12 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
 
         if activation_fn is not None:
             self.set_activation_fn(activation_fn, set_default=False)
+
         #Check input shape
-        print(self.model)
-        print(len(sentences))
-        print(sentences[0])
+        if(self.debug):
+            print(self.model)
+            print(len(sentences))
+            print(sentences[0])
         sep_tok = self.tokenizer.sep_token
         # cls_tok = self.tokenizer.cls_token
         
@@ -423,9 +428,9 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
         for start_index in trange(0, len(sentences), batch_size, desc="Batches", disable=not show_progress_bar):
             batch = sentences[start_index : start_index + batch_size]
             formatted_batch = [f"{q}{sep_tok}<p1>{p1}{sep_tok}<p2>{p2}{sep_tok}<p3>{p3}" for q, p1, p2, p3 in batch]
-            
-            print("size", batch_size, formatted_batch) # custom
-            print(batch) # custom 
+            if(self.debug):
+                print("size", batch_size, formatted_batch) # custom
+                print(batch) # custom 
             features = self.tokenizer(
                 formatted_batch,
                 padding=True,
@@ -438,23 +443,25 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
                 pos = [(inputs == tok).nonzero(as_tuple=True)[0].item() for tok in sp_tok_id]
                 batch_tok_pos.append(pos)
 
-            # for i in range(len(sp_tok)):
-            #     tok_pos.append((features["input_ids"][0] == sp_tok_id[i]).nonzero(as_tuple=True)[0].item())
-            print(batch_tok_pos) # custom
-            token_dec = self.tokenizer.convert_ids_to_tokens(features["input_ids"][0])
-            token_dec2 = self.tokenizer.convert_ids_to_tokens(features["input_ids"][1])
-            print(token_dec)
-            print(token_dec2)
-            features.to(self.model.device)
-            print("==========================")
+            if(self.debug):
+                print(batch_tok_pos) # custom
+                token_dec = self.tokenizer.convert_ids_to_tokens(features["input_ids"][0])
+                token_dec2 = self.tokenizer.convert_ids_to_tokens(features["input_ids"][1])
+                print(token_dec)
+                print(token_dec2)
+                print("device", self.model.device)
+                print("==========================")
             
+            features.to(self.model.device)
+            #with torch.no_grad(): 
             model_predictions = self.model(**features, return_dict=True, output_hidden_states=True)
 
             hs = model_predictions.hidden_states[-1]
             tok_pred = []
             tok_logits = []
             pred_tok_scores = [[] for i in range(batch_size)]
-            print("hs shape", hs.shape)
+            if(self.debug): print("hs shape", hs.shape)
+
             for i, tok in enumerate(batch_tok_pos):
                 for j, pos in enumerate(tok):
                     hidden_repr = hs[i:i+1,pos:pos+1,:]
@@ -463,52 +470,35 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
                     if apply_softmax and tok_logits.ndim > 1:
                         tok_logits = torch.nn.functional.softmax(tok_logits, dim=1)
                     pred_tok_scores[i].append(tok_logits)
-                    # tok_pred.append(self.cls_head(hs[:,pos:pos+1,:]))
-                    # tok_logits.append(self.activation_fn(tok_pred[i]))
-                    # if apply_softmax and logits.ndim > 1:
-                    #     tok_logits[i] = torch.nn.functional.softmax(tok_logits[i], dim=1)
-                    # pred_tok_scores[i].append([])
-                    # pred_tok_scores[i].extend(tok_logits[i])
-            # for i in range(len(sp_tok)):
-            #     tok_pred.append(self.cls_head(hs[:,batch_tok_pos[i]:batch_tok_pos[i]+1,:]))
-            #     tok_logits.append(self.activation_fn(tok_pred[i]))
-            #     if apply_softmax and logits.ndim > 1:
-            #         tok_logits[i] = torch.nn.functional.softmax(tok_logits[i], dim=1)
-            #     pred_tok_scores.append([])
-            #     pred_tok_scores[i].extend(tok_logits[i])
 
 
-            # print(model_predictions.keys()) 
-            # print("hidden_len", len(model_predictions.hidden_states))
-            # print("hidden[-1]", model_predictions.hidden_states[-1].shape)
-            logits = self.activation_fn(model_predictions.logits)
+            # logits = self.activation_fn(model_predictions.logits)
 
-            if apply_softmax and logits.ndim > 1:
-                logits = torch.nn.functional.softmax(logits, dim=1)
-            pred_scores.extend(logits)
+            # if apply_softmax and logits.ndim > 1:
+            #     logits = torch.nn.functional.softmax(logits, dim=1)
+            # pred_scores.extend(logits)
 
         if self.config.num_labels == 1:
-            pred_scores = [score[0] for score in pred_scores]
+            # pred_scores = [score[0] for score in pred_scores]
             for i in range(len(pred_tok_scores)):
                 pred_tok_scores[i] = [score[0] for score in pred_tok_scores[i]]
 
-        print(convert_to_tensor, convert_to_numpy, input_was_singular) # custom
+        if(self.debug): print(convert_to_tensor, convert_to_numpy, input_was_singular) # custom
         if convert_to_tensor:
-            pred_scores = torch.stack(pred_scores)
+            # pred_scores = torch.stack(pred_scores)
             for i in range(len(pred_tok_scores)):
                 pred_tok_scores[i] = torch.stack(pred_tok_scores[i])
         elif convert_to_numpy:
-            pred_scores = np.asarray([score.cpu().detach().float().numpy() for score in pred_scores])
+            # pred_scores = np.asarray([score.cpu().detach().float().numpy() for score in pred_scores])
             for i in range(len(pred_tok_scores)):
                 pred_tok_scores[i] = np.asarray([score.cpu().detach().float().numpy() for score in pred_tok_scores[i]])
 
         if input_was_singular:
-            pred_scores = pred_scores[0]
+            # pred_scores = pred_scores[0]
             for i in range(len(pred_tok_scores)):
                 pred_tok_scores[i] = pred_tok_scores[i][0]
 
-        return pred_scores, pred_tok_scores
-        # return pred_tok_scores
+        return pred_tok_scores
     
     @cross_encoder_predict_rank_args_decorator
     def rank(
