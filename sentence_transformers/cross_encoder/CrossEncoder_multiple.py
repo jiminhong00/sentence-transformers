@@ -192,7 +192,7 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
         self.model.resize_token_embeddings(len(self.tokenizer))
         # if(self.debug): print(self.tokenizer.special_tokens_map) # custom code
 
-        self.base_model = self.model.longformer
+        # self.base_model = self.model.longformer
         self.cls_head = self.model.classifier
 
         
@@ -301,7 +301,48 @@ class CrossEncoder_multiple(nn.Module, PushToHubMixin, FitMixin):
         return self.activation_fn
 
     def forward(self, *args, **kwargs):
-        return self.model(*args, **kwargs)
+        # print(args)
+        # print("=========")
+        # print(kwargs)
+        #custom train_code
+        # print(kwargs.keys())
+        input_ids = kwargs["input_ids"]
+        attention_maks = kwargs["attention_mask"]
+
+        kwargs["output_hidden_states"] = True
+        kwargs["return_dict"] = True
+        # print(kwargs.keys())
+        model_predictions = self.model(*args, **kwargs)
+        hs = model_predictions.hidden_states[-1]
+        
+        # outputs = self.model(**inputs, output_hidden_states=True, return_dict=True)
+        # hidden = outputs.hidden_states[-1]  # (batch_size, seq_len, hidden_size)
+
+        # Locate token positions for <s>, <p1>, <p2>, <p3>
+        special_tokens = ["<s>", "<p1>", "<p2>", "<p3>"]
+        token_ids = self.tokenizer.convert_tokens_to_ids(special_tokens)
+
+        logits_per_sample = []
+        for i in range(input_ids.size(0)):
+            pos_logits = []
+            for tok_id in token_ids:
+                tok_pos = (input_ids[i] == tok_id).nonzero(as_tuple=True)
+                # if tok_pos[0].numel() == 0:
+                #     raise ValueError(f"Token ID {tok_id} not found in input_ids[{i}]")
+                pos = tok_pos[0][0].item()
+                token_hidden = hs[i:i+1, pos:pos+1, :]  # shape: (1, hidden_size)
+                logit = self.cls_head(token_hidden)  # shape: (1, num_labels)
+                logit = self.activation_fn(logit)
+                pos_logits.append(logit.squeeze(0))  # shape: (num_labels,)
+            logits_per_sample.append(torch.stack(pos_logits))  # (4, num_labels)
+
+        logits = torch.stack(logits_per_sample)  # (batch_size, 4, num_labels)
+
+        output = {"logits": logits}
+
+
+        return output
+        # return self.model(*args, **kwargs)
 
     @overload
     def predict(

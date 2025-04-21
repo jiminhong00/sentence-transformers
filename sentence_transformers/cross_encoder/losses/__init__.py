@@ -18,6 +18,8 @@ from .MSELoss import MSELoss
 from .MultipleNegativesRankingLoss import MultipleNegativesRankingLoss
 from .PListMLELoss import PListMLELambdaWeight, PListMLELoss
 from .RankNetLoss import RankNetLoss
+from .PListOrderLoss import PListOrderLoss, PListOrderLambdaWeight
+from .ListOrderLoss import ListOrderLoss
 
 __all__ = [
     "BinaryCrossEntropyLoss",
@@ -37,4 +39,7 @@ __all__ = [
     "LambdaRankScheme",
     "NDCGLoss2PPScheme",
     "RankNetLoss",
+    "ListOrderLoss",
+    "PListOrderLoss",
+    "PListOrderLambdaWeight",
 ]

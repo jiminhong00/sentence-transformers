@@ -6,7 +6,7 @@ from sentence_transformers.cross_encoder import CrossEncoder
 from sentence_transformers.cross_encoder.losses.PListOrderLoss import PListOrderLoss
 
 
-class ListMLELoss(PListOrderLoss):
+class ListOrderLoss(PListOrderLoss):
     def __init__(
         self,
         model: CrossEncoder,

@@ -303,9 +303,19 @@ class CrossEncoderTrainer(SentenceTransformerTrainer):
         """Turn the inputs from the dataloader into the separate model inputs & the labels."""
         # All inputs ending with `_input_ids` (Transformers), `_sentence_embedding` (BoW), `_pixel_values` (CLIPModel)
         # are considered to correspond to a feature
-        labels = inputs.pop("label", None)
-        features = list(inputs.values())
-        return features, labels
+        queries = inputs["query"]
+        p1  = inputs["p1"]
+        p2  = inputs["p2"]
+        p3  = inputs["p3"]
+        labels = inputs["label"]
+        
+        formatted_inputs = [ [q, d1, d2, d3] for q, d1, d2, d3 in zip(queries, p1, p2, p3) ]
+        
+        # labels = inputs.pop("label", None)
+        # features = list(inputs.values())
+        # return features, labels
+        return formatted_inputs, labels
+        
 
     def _load_from_checkpoint(self, checkpoint_path: str) -> None:
         from sentence_transformers.cross_encoder import CrossEncoder

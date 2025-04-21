@@ -216,26 +216,32 @@ class PListOrderLoss(nn.Module):
             )
             tokens = tokens.to(self.model.device)
             
-            batch_tok_pos = [] # [cls, p1, p2, p3]
+            # batch_tok_pos = [] # [cls, p1, p2, p3]
 
-            for inputs in tokens["input_ids"]:
-                pos = [(inputs == tok).nonzero(as_tuple=True)[0].item() for tok in sp_tok_id]
-                batch_tok_pos.append(pos)
-                
-            preds = self.model(**tokens, return_dict=True, output_hidden_states=True)
-            hs = preds.hidden_states[-1]
-            tok_pred = []
-            tok_logits = []
-            pred_tok_scores = [[] for i in range(mini_batch_size)]
+            # for inputs in tokens["input_ids"]:
+            #     pos = [(inputs == tok).nonzero(as_tuple=True)[0].item() for tok in sp_tok_id]
+            #     batch_tok_pos.append(pos)
+            preds = self.model(**tokens)["logits"]
+            # print(preds)
+            # print(preds.shape)
+            # print(preds["logits"].shape)
+            preds = preds[0].view(-1)
+            # preds = self.model(**tokens)[0].view(-1)
+            logits_list.append(preds)
+        
+            # # hs = preds.hidden_states[-1]
+            # tok_pred = []
+            # tok_logits = []
+            # pred_tok_scores = [[] for i in range(mini_batch_size)]
             
-            for j, pos_list in enumerate(batch_tok_pos):
-                token_scores = []
-                for pos in pos_list:
-                    token_repr = hs[j, pos, :].unsqueeze(0)  # (1, hidden_dim)
-                    logit = self.model.cls_head(token_repr)
-                    logit = self.activation_fn(logit)
-                    token_scores.append(logit.squeeze())  # (1,) -> scalar
-                logits_list.append(torch.stack(token_scores))  # (4,)
+            # for j, pos_list in enumerate(batch_tok_pos):
+            #     token_scores = []
+            #     for pos in pos_list:
+            #         token_repr = hs[j, pos, :].unsqueeze(0)  # (1, hidden_dim)
+            #         logit = self.model.cls_head(token_repr)
+            #         logit = self.activation_fn(logit)
+            #         token_scores.append(logit.squeeze())  # (1,) -> scalar
+            #     logits_list.append(torch.stack(token_scores))  # (4,)
                 
         #     for i, tok in enumerate(batch_tok_pos):
         #         for j, pos in enumerate(tok):
@@ -243,17 +249,18 @@ class PListOrderLoss(nn.Module):
         #             tok_pred = self.cls_head(hidden_repr)
         #             tok_logits = self.activation_fn(tok_pred)
         #             # if apply_softmax and tok_logits.ndim > 1:
-        #             #     tok_logits = torch.nn.functional.softmax(tok_logits, dim=1)
+        #             #     tok_logits = torch.nn.functional.softm
+        # ax(tok_logits, dim=1)
         #             # pred_tok_scores[i].append(tok_logits)
             
         #     logits = self.model(**tokens)[0].view(-1)
         #     logits_list.append(logits)
 
-        # logits = torch.cat(logits_list, dim=0)
-        # logits = self.activation_fn(logits)
+        logits = torch.cat(logits_list, dim=0)
+        logits = self.activation_fn(logits)
 
         # Create output tensor filled with a very small value for padded logits
-        logits_matrix = torch.stack(logits_all).view(batch_size, 4)  # (batch, 4)
+        logits_matrix = torch.stack(logits_list).view(batch_size, 4)  # (batch, 4)
         labels_matrix = torch.stack([lbl.float() for lbl in labels]).to(self.model.device)  # (batch, 4)
 
         mask = torch.ones_like(labels_matrix, dtype=torch.bool)
