@@ -10,7 +10,7 @@ from sentence_transformers.cross_encoder.losses import ListOrderLoss
 from sentence_transformers.cross_encoder.trainer import CrossEncoderTrainer
 from sentence_transformers.cross_encoder.training_args import CrossEncoderTrainingArguments
 
-debug = True
+debug = False
 
 def main():
     model_name = "allenai/longformer-base-4096"
@@ -41,9 +41,10 @@ def main():
     # 2. Load the MS MARCO dataset: https://huggingface.co/datasets/microsoft/ms_marco
     logging.info("Read train dataset")
     # Change Here dataset = load_dataset("microsoft/ms_marco", "v1.1", split="train")
-    dataset = load_dataset("json", data_files="./dataset/rerank/after_reorder/formatted/reordered_arc_c_train.json")["train"]
-    print(type(dataset))
-    print("len", len(dataset))
+    dataset = load_dataset("json", data_files="./dataset/rerank/after_reorder/formatted/uprise_task_gen_to_send.json")["train"]
+    if(debug):
+        print(type(dataset))
+        print("len", len(dataset))
     # print(dataset.keys())
     def qp_mapper(batch):
         # print(batch)
@@ -109,16 +110,17 @@ def main():
 
     # Create a dataset with a "query" column with strings, a "docs" column with lists of strings,
     # and a "labels" column with lists of floats
-    if(debug): print(dataset.column_names)
-    print(type(dataset))
+    if(debug): 
+        print(dataset.column_names)
+        print(type(dataset))
     dataset = dataset.map(
         lambda batch: qp_mapper(batch=batch),
         batched=True,
         remove_columns=dataset.column_names,
         desc="Processing listwise samples",
     )
-    print(type(dataset))
-    print(dataset.column_names)
+    # print(type(dataset))
+    # print(dataset.column_names)
 
     dataset = dataset.train_test_split(test_size=1_00)
     train_dataset = dataset["train"]
@@ -156,8 +158,9 @@ def main():
         save_total_limit=2,
         logging_steps=250,
         logging_first_step=True,
-        run_name=run_name,  # Will be used in W&B if `wandb` is installed
+        run_name=run_name+"1",  # Will be used in W&B if `wandb` is installed
         seed=12,
+        gradient_accumulation_steps = 8 # b/c of small batch size
     )
 
     # 6. Create the trainer & start training
