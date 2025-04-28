@@ -14,7 +14,6 @@ from torch import nn
 from tqdm.autonotebook import trange
 from transformers import (
     AutoConfig,
-    AutoModel,
     AutoModelForSequenceClassification,
     AutoTokenizer,
     PretrainedConfig,
@@ -102,7 +101,7 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
             the model. If not set, a default model card data object is created.
     """
 
-    #@cross_encoder_init_args_decorator
+    @cross_encoder_init_args_decorator
     def __init__(
         self,
         model_name_or_path: str,
@@ -119,7 +118,6 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
         tokenizer_kwargs: dict = None,
         config_kwargs: dict = None,
         model_card_data: CrossEncoderModelCardData | None = None,
-        debug: bool=False
     ) -> None:
         super().__init__()
         if tokenizer_kwargs is None:
@@ -131,7 +129,6 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
         self.model_card_data = model_card_data or CrossEncoderModelCardData()
         self.trust_remote_code = trust_remote_code
         self._model_card_text = None
-        self.debug = debug 
 
         config: PretrainedConfig = AutoConfig.from_pretrained(
             model_name_or_path,
@@ -160,7 +157,6 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
 
         if num_labels is not None:
             config.num_labels = num_labels
-        
         self.model: PreTrainedModel = AutoModelForSequenceClassification.from_pretrained(
             model_name_or_path,
             config=config,
@@ -171,11 +167,9 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
             token=token,
             **model_kwargs,
         )
-        
-        
         if "model_max_length" not in tokenizer_kwargs and max_length is not None:
             tokenizer_kwargs["model_max_length"] = max_length
-            
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name_or_path,
             cache_dir=cache_folder,
@@ -185,17 +179,7 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
             token=token,
             **tokenizer_kwargs,
         )
-
-        #adding special tokens for parsing multiple sequences
-        extra_special_tokens={"additional_special_tokens": ["<p1>", "<p2>", "<p3>"]}
-        self.tokenizer.add_special_tokens(extra_special_tokens)
-        self.model.resize_token_embeddings(len(self.tokenizer))
-        # if(self.debug): print(self.tokenizer.special_tokens_map) # custom code
-
-        # self.base_model = self.model.longformer
-        self.cls_head = self.model.classifier
-
-        
+        print("kklklkklkj=====================================================================================")
         if "model_max_length" not in tokenizer_kwargs and hasattr(self.config, "max_position_embeddings"):
             self.tokenizer.model_max_length = min(self.tokenizer.model_max_length, self.config.max_position_embeddings)
 
@@ -225,7 +209,6 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
         # Pass the model to the model card data for later use in generating a model card upon saving this model
         self.model_card_data.register_model(self)
         self.model_card_data.set_base_model(model_name_or_path, revision=revision)
-        # print("Cross Encoder model of ")
 
     def set_activation_fn(self, activation_fn: Callable | None, set_default: bool = True) -> None:
         if activation_fn is not None:
@@ -302,48 +285,9 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
         return self.activation_fn
 
     def forward(self, *args, **kwargs):
-        # print(args)
-        # print("=========")
-        # print(kwargs)
-        #custom train_code
-        # print(kwargs.keys())
-        input_ids = kwargs["input_ids"]
-        attention_maks = kwargs["attention_mask"]
-
-        kwargs["output_hidden_states"] = True
-        kwargs["return_dict"] = True
-        # print(kwargs.keys())
-        model_predictions = self.model(*args, **kwargs)
-        hs = model_predictions.hidden_states[-1]
-        
-        # outputs = self.model(**inputs, output_hidden_states=True, return_dict=True)
-        # hidden = outputs.hidden_states[-1]  # (batch_size, seq_len, hidden_size)
-
-        # Locate token positions for <s>, <p1>, <p2>, <p3>
-        special_tokens = ["<s>", "<p1>", "<p2>", "<p3>"]
-        token_ids = self.tokenizer.convert_tokens_to_ids(special_tokens)
-
-        logits_per_sample = []
-        for i in range(input_ids.size(0)):
-            pos_logits = []
-            for tok_id in token_ids:
-                tok_pos = (input_ids[i] == tok_id).nonzero(as_tuple=True)
-                # if tok_pos[0].numel() == 0:
-                #     raise ValueError(f"Token ID {tok_id} not found in input_ids[{i}]")
-                pos = tok_pos[0][0].item()
-                token_hidden = hs[i:i+1, pos:pos+1, :]  # shape: (1, hidden_size)
-                logit = self.cls_head(token_hidden)  # shape: (1, num_labels)
-                logit = self.activation_fn(logit)
-                pos_logits.append(logit.squeeze(0))  # shape: (num_labels,)
-            logits_per_sample.append(torch.stack(pos_logits))  # (4, num_labels)
-
-        logits = torch.stack(logits_per_sample)  # (batch_size, 4, num_labels)
-
-        output = {"logits": logits}
-        # print("forward")
-
-        return output
-        # return self.model(*args, **kwargs)
+        print(kwargs)
+        print(args)
+        return self.model(*args, **kwargs)
 
     @overload
     def predict(
@@ -442,11 +386,10 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
                 # => array([0.6912767, 0.4303499], dtype=float32)
         """
         input_was_singular = False
-        if(self.debug): print(sentences)
         if isinstance(sentences[0], str):  # Cast an individual pair to a list with length 1
             sentences = [sentences]
             input_was_singular = True
-        if(self.debug): print("is:", input_was_singular)
+
         if show_progress_bar is None:
             show_progress_bar = (
                 logger.getEffectiveLevel() == logging.INFO or logger.getEffectiveLevel() == logging.DEBUG
@@ -455,95 +398,37 @@ class CrossEncoder(nn.Module, PushToHubMixin, FitMixin):
         if activation_fn is not None:
             self.set_activation_fn(activation_fn, set_default=False)
 
-        #Check input shape
-        if(self.debug):
-            # print(self.model)
-            print("len", len(sentences))
-            print(sentences[0])
-        sep_tok = self.tokenizer.sep_token
-        # cls_tok = self.tokenizer.cls_token
-        
-        sp_tok = ["<s>", "<p1>", "<p2>", "<p3>"]
-        sp_tok_id = self.tokenizer.convert_tokens_to_ids(sp_tok)
-
         pred_scores = []
         self.model.eval()
         for start_index in trange(0, len(sentences), batch_size, desc="Batches", disable=not show_progress_bar):
             batch = sentences[start_index : start_index + batch_size]
-            formatted_batch = [f"{q}{sep_tok}<p1>{p1}{sep_tok}<p2>{p2}{sep_tok}<p3>{p3}" for q, p1, p2, p3 in batch]
-            if(self.debug):
-                print("--------------------------------")
-                print("size", batch_size, formatted_batch) # custom
-                print(batch) # custom 
             features = self.tokenizer(
-                formatted_batch,
+                batch,
                 padding=True,
                 truncation=True,
                 return_tensors="pt",
             )
-            batch_tok_pos = [] # [cls, p1, p2, p3]
-
-            for inputs in features["input_ids"]:
-                pos = [(inputs == tok).nonzero(as_tuple=True)[0].item() for tok in sp_tok_id]
-                batch_tok_pos.append(pos)
-
-            if(self.debug):
-                print(batch_tok_pos) # custom
-                token_dec = self.tokenizer.convert_ids_to_tokens(features["input_ids"][0])
-                print(token_dec)
-                # token_dec2 = self.tokenizer.convert_ids_to_tokens(features["input_ids"][1])
-                # print(token_dec2)
-                print("device", self.model.device)
-                print("==========================")
-            
             features.to(self.model.device)
-            #with torch.no_grad(): 
-            model_predictions = self.model(**features, return_dict=True, output_hidden_states=True)
+            model_predictions = self.model(**features, return_dict=True)
+            logits = self.activation_fn(model_predictions.logits)
 
-            hs = model_predictions.hidden_states[-1]
-            tok_pred = []
-            tok_logits = []
-            pred_tok_scores = [[] for i in range(batch_size)]
-            if(self.debug): print("hs shape", hs.shape)
-
-            for i, tok in enumerate(batch_tok_pos):
-                for j, pos in enumerate(tok):
-                    hidden_repr = hs[i:i+1,pos:pos+1,:]
-                    tok_pred = self.cls_head(hidden_repr)
-                    tok_logits = self.activation_fn(tok_pred)
-                    if apply_softmax and tok_logits.ndim > 1:
-                        tok_logits = torch.nn.functional.softmax(tok_logits, dim=1)
-                    pred_tok_scores[i].append(tok_logits)
-
-
-            # logits = self.activation_fn(model_predictions.logits)
-
-            # if apply_softmax and logits.ndim > 1:
-            #     logits = torch.nn.functional.softmax(logits, dim=1)
-            # pred_scores.extend(logits)
+            if apply_softmax and logits.ndim > 1:
+                logits = torch.nn.functional.softmax(logits, dim=1)
+            pred_scores.extend(logits)
 
         if self.config.num_labels == 1:
-            # pred_scores = [score[0] for score in pred_scores]
-            for i in range(len(pred_tok_scores)):
-                pred_tok_scores[i] = [score[0] for score in pred_tok_scores[i]]
+            pred_scores = [score[0] for score in pred_scores]
 
-        if(self.debug): print("------------------------",convert_to_tensor, convert_to_numpy, input_was_singular) # custom
         if convert_to_tensor:
-            # pred_scores = torch.stack(pred_scores)
-            for i in range(len(pred_tok_scores)):
-                pred_tok_scores[i] = torch.stack(pred_tok_scores[i])
+            pred_scores = torch.stack(pred_scores)
         elif convert_to_numpy:
-            # pred_scores = np.asarray([score.cpu().detach().float().numpy() for score in pred_scores])
-            for i in range(len(pred_tok_scores)):
-                pred_tok_scores[i] = np.asarray([score.cpu().detach().float().numpy() for score in pred_tok_scores[i]])
-        #change input_singular
-        # if input_was_singular:
-        #     # pred_scores = pred_scores[0]
-        #     for i in range(len(pred_tok_scores)):
-        #         pred_tok_scores[i] = pred_tok_scores[i][0]
+            pred_scores = np.asarray([score.cpu().detach().float().numpy() for score in pred_scores])
 
-        return pred_tok_scores
-    
+        if input_was_singular:
+            pred_scores = pred_scores[0]
+
+        return pred_scores
+
     @cross_encoder_predict_rank_args_decorator
     def rank(
         self,

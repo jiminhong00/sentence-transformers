@@ -4,11 +4,14 @@ import traceback
 import torch
 from datasets import load_dataset
 
-from sentence_transformers.cross_encoder.CrossEncoder_multiple import CrossEncoder_multiple
+from sentence_transformers.cross_encoder.CrossEncoder import CrossEncoder
 from sentence_transformers.cross_encoder.evaluation import CrossEncoderNanoBEIREvaluator
+from sentence_transformers.cross_encoder.evaluation import CrossEncoderReorderingEvaluator
 from sentence_transformers.cross_encoder.losses import ListOrderLoss
 from sentence_transformers.cross_encoder.trainer import CrossEncoderTrainer
 from sentence_transformers.cross_encoder.training_args import CrossEncoderTrainingArguments
+
+from datetime import datetime
 
 debug = False
 
@@ -21,27 +24,32 @@ def main():
         datefmt="%Y-%m-%d %H:%M:%S",
         level=logging.INFO,
     )
+    now = datetime.now()
+    current_time = now.strftime("%m%d_%H%M")
     # train_batch_size and eval_batch_size inform the size of the batches, while mini_batch_size is used by the loss
     # to subdivide the batch into smaller parts. This mini_batch_size largely informs the training speed and memory usage.
     # Keep in mind that the loss does not process `train_batch_size` pairs, but `train_batch_size * num_docs` pairs.
     train_batch_size = 1
     eval_batch_size = 1
     mini_batch_size = 1
-    num_epochs = 1
+    num_epochs = 3
     max_docs = None
-    respect_input_order = True  # Whether to respect the original order of documents
+    respect_input_order = False # Whether to respect the original order of documents
 
     # 1. Define our CrossEncoder model
     # Set the seed so the new classifier weights are identical in subsequent runs
     torch.manual_seed(12)
-    model = CrossEncoder_multiple(model_name, num_labels=1)
+    model = CrossEncoder(model_name, num_labels=1)
     print("Model max length:", model.max_length)
     print("Model num labels:", model.num_labels)
 
     # 2. Load the MS MARCO dataset: https://huggingface.co/datasets/microsoft/ms_marco
     logging.info("Read train dataset")
     # Change Here dataset = load_dataset("microsoft/ms_marco", "v1.1", split="train")
-    dataset = load_dataset("json", data_files="./dataset/rerank/after_reorder/formatted/uprise_task_gen_to_send.json")["train"]
+    
+    if(debug): dataset = load_dataset("json", data_files="./dataset/rerank/after_reorder/formatted/test_train.json")["train"]
+    else: dataset = load_dataset("json", data_files="./dataset/rerank/after_reorder/formatted/uprise_task_gen_to_send.json")["train"]
+    
     if(debug):
         print(type(dataset))
         print("len", len(dataset))
@@ -122,7 +130,9 @@ def main():
     # print(type(dataset))
     # print(dataset.column_names)
 
-    dataset = dataset.train_test_split(test_size=1_00)
+    if(debug): dataset = dataset.train_test_split(test_size=2)
+    else: dataset = dataset.train_test_split(test_size=10_00)
+    
     train_dataset = dataset["train"]
     eval_dataset = dataset["test"]
     logging.info(train_dataset)
@@ -132,35 +142,39 @@ def main():
 
     # 4. Define the evaluator. We use the CENanoBEIREvaluator, which is a light-weight evaluator for English reranking
     # evaluator = CrossEncoderNanoBEIREvaluator(dataset_names=["msmarco", "nfcorpus", "nq"], batch_size=eval_batch_size)
-    # evaluator(model)
+    evaluator = CrossEncoderReorderingEvaluator(eval_dataset, batch_size=eval_batch_size)
+    evaluator(model)
 
     # 5. Define the training arguments
     short_model_name = model_name if "/" not in model_name else model_name.split("/")[-1]
-    run_name = f"promptnet-{short_model_name}-listorderloss"
+    
+    if(debug): run_name = "debug"
+    else: run_name = f"promptnet-{short_model_name}-listorderloss-Xmultiple"
     args = CrossEncoderTrainingArguments(
         # Required parameter:
-        output_dir=f"models/{run_name}",
+        output_dir=f"models/{run_name}/{current_time}",
         # Optional training parameters:
         num_train_epochs=num_epochs,
         per_device_train_batch_size=train_batch_size,
         per_device_eval_batch_size=eval_batch_size,
-        learning_rate=2e-5,
+        learning_rate=2e-5, #default 2e-5
         warmup_ratio=0.1,
-        fp16=False,  # Set to False if you get an error that your GPU can't run on FP16
-        bf16=True,  # Set to True if you have a GPU that supports BF16
+        fp16=True,  # Set to False if you get an error that your GPU can't run on FP16. default False
+        bf16=False,  # Set to True if you have a GPU that supports BF16. default True
         load_best_model_at_end=True,
-        metric_for_best_model="eval_NanoBEIR_R100_mean_ndcg@10",
+        # metric_for_best_model="eval_NanoBEIR_R100_mean_ndcg@10",
+        metric_for_best_model="all_acc",
         # Optional tracking/debugging parameters:
-        eval_strategy="no",
+        eval_strategy="steps",
         eval_steps=500,
-        save_strategy="no",
+        save_strategy="steps",
         save_steps=500,
         save_total_limit=2,
-        logging_steps=250,
+        logging_steps=100,
         logging_first_step=True,
-        run_name=run_name+"1",  # Will be used in W&B if `wandb` is installed
+        run_name=run_name,  # Will be used in W&B if `wandb` is installed
         seed=12,
-        gradient_accumulation_steps = 8 # b/c of small batch size
+        gradient_accumulation_steps = 4 # b/c of small batch size
     )
 
     # 6. Create the trainer & start training
@@ -170,16 +184,17 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         loss=loss,
-        # evaluator=evaluator,
+        evaluator=evaluator,
     )
     trainer.train()
 
     # 7. Evaluate the final model, useful to include these in the model card
-    # evaluator(model)
+    evaluator(model)
 
     # 8. Save the final model
-    final_output_dir = f"models/{run_name}/final"
-    model.save_pretrained(final_output_dir)
+    final_output_dir = f"models/{run_name}/{current_time}"
+    # final_output_dir = f"models/{run_name}/{current_time}/final"
+    model.save_pretrained(final_output_dir) #modified
 
    
 
